@@ -1,0 +1,5 @@
+pandas
+psycopg[binary]
+selenium
+pdfplumber
+python-dotenv
