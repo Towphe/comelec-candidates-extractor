@@ -22,7 +22,8 @@ CREATE TABLE senator (
 CREATE TABLE partylist (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     ballot_number INTEGER NOT NULL,
-    name VARCHAR(256) NOT NULL
+    ballot_name VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL
 );
 
 CREATE TABLE province_summary (
