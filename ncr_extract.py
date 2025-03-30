@@ -40,10 +40,11 @@ correctTitle = {
     "COUCNOCUILNOCRILOR": "COUNCILOR"
 }
 
-with_provincial_board = ("LAGUNA_CITYOFCALAMBA.pdf", "CITY OF CALAMBA", "LAGUNA", "IV-A")
-with_own_legislative = ("DAVAODELSUR_DAVAOCITY.pdf", "CITY OF DAVAO", "DAVAO DEL SUR", "XI")
-provincial = ("LAGUNA_OPES.pdf", None, "LAGUNA", "IV-A")
-basic_lgu = ("LAGUNA_LILIW.pdf", "LILIW", "LAGUNA", "IV-A")
+# with_provincial_board = ("LAGUNA_CITYOFCALAMBA.pdf", "CITY OF CALAMBA", "LAGUNA", "IV-A")
+# with_own_legislative = ("DAVAODELSUR_DAVAOCITY.pdf", "CITY OF DAVAO", "DAVAO DEL SUR", "XI")
+# provincial = ("LAGUNA_OPES.pdf", None, "LAGUNA", "IV-A")
+# basic_lgu = ("LAGUNA_LILIW.pdf", "LILIW", "LAGUNA", "IV-A")
+# pateros = ("./temp/PATEROS.pdf", "PATEROS", None, "NCR")
 
 def extract_local(file_info:tuple):
     master_list = []
@@ -123,7 +124,9 @@ def extract_local(file_info:tuple):
     df["POLITICAL PARTY"] = df["POLITICAL PARTY"].apply(remove_line_breaks)
     df["SEX"] = df["SEX"].apply(shorten_sex)
 
-    return (df[(df["POSITION"] == "GOVERNOR") | (df["POSITION"] == "VICE-GOVERNOR") | (df["POSITION"] == "PROVINCIAL BOARD MEMBER") | (df["POSITION"] == "REPRESENTATIVE") | (df["POSITION"] == "MAYOR") | (df["POSITION"] == "VICE-MAYOR") | (df["POSITION"] == "COUNCILOR")], district_count)
+    return (df[(df["POSITION"] == "GOVERNOR") | (df["POSITION"] == "VICE-GOVERNOR") | (df["POSITION"] == "PROVINCIAL BOARD MEMBER") | (df["POSITION"] == "REPRESENTATIVE") | (df["POSITION"] == "MAYOR") | (df["POSITION"] == "VICE-MAYOR") | (df["POSITION"] == "COUNCILOR")], district_count, legislative_count)
+
+# extract_local(pateros)[0].to_csv("pateros.csv")
 
 # extract_local(with_provincial_board).to_csv("calamba_city.csv")
 # extract_local(with_own_legislative).to_csv("davao_city.csv")
@@ -137,7 +140,9 @@ options.add_experimental_option("prefs", {
 })
 driver = webdriver.Chrome(options=options)
 
-def extract_politicians_in_province(link:str, region:str) -> pd.DataFrame|None:
+
+
+def extract_politicians_in_ncr(link:str) -> pd.DataFrame|None:
     
     db = psycopg.connect(db_key, cursor_factory=psycopg.ClientCursor)
 
@@ -148,34 +153,23 @@ def extract_politicians_in_province(link:str, region:str) -> pd.DataFrame|None:
     time.sleep(3)
 
     # get accordions that contain provincial data
-    root = driver.find_element(by=By.ID, value="accordionFlushExample")
-    province_divs = root.find_elements(by=By.CLASS_NAME, value="accordion-item")
-    province_count = len(province_divs)
     
-    i=0
-    for i in range(province_count):
-        lgus_wrapper_xpath = f"/html/body/div[3]/div[2]/div/div[2]/div/div[1]/div/div/div/div[{i+1}]/div/div/ul"
-        province_name_wrapper = f"/html/body/div[3]/div[2]/div/div[2]/div/div[1]/div/div/div/div[{i+1}]/h2/button"
+    lgus_wrapper_xpath = f"/html/body/div[3]/div[2]/div/div[2]/div/div[1]/div/div/ul"
 
-        # get links of lgus
-        lgus = driver.find_element(by=By.XPATH, value=lgus_wrapper_xpath).find_elements(by=By.TAG_NAME, value="li")
-        province_name = driver.find_element(by=By.XPATH, value=f"{province_name_wrapper}/span").get_attribute("innerHTML")
+    # get links of lgus
+    lgus = driver.find_element(by=By.XPATH, value=lgus_wrapper_xpath).find_elements(by=By.TAG_NAME, value="li")
 
-        # open accordion
-        accordion_header = driver.find_element(by=By.XPATH, value=province_name_wrapper)
-        driver.execute_script("arguments[0].click()", accordion_header)
-
-        # extract one by one
-        j = 0
-        for j in range(len(lgus)):
+    # extract one by one
+    j = 0
+    for j in range(len(lgus)):
 
             # get file link
             lgu_link = lgus[j].find_element(by=By.TAG_NAME, value="a")
 
             # get lgu name
-            lgu_name = lgu_link.find_element(by=By.TAG_NAME, value="span").get_attribute("innerHTML")
+            lgu_name = lgu_link.get_attribute("innerHTML")
             
-            filename = f"{province_name}_{lgu_name}.pdf"
+            filename = f"NCR_{lgu_name}.pdf"
 
             # get file
             try: 
@@ -194,9 +188,10 @@ def extract_politicians_in_province(link:str, region:str) -> pd.DataFrame|None:
             cur = db.cursor()
 
             # extract data
-            if (lgu_name == "PROVINCIAL POSITIONS"):
+            if (lgu_name == "HOUSE OF REPRESENTATIVES"):
+                continue
                 # deal accordingly as provincial position
-                extracted = extract_local((f"temp/{filename}", None, province_name, region))
+                extracted = extract_local((f"temp/{filename}", None, province_name, "NCR"))
                 
                 # save data straight to db
                 with cur.copy("COPY local_candidate (ballot_number, ballot_name, sex, name, partylist, position, district, lgu, province) FROM STDIN") as copy:
@@ -207,10 +202,12 @@ def extract_politicians_in_province(link:str, region:str) -> pd.DataFrame|None:
                 db.execute("""
                             INSERT INTO province_summary (name, total_provincial_district, total_legislative_district, region)
                             VALUES (%s, %s, %s, %s);
-                           """, (province_name, extracted[1], extracted[1], region))
+                           """, (None, extracted[1], extracted[1], "NCR"))
                 db.commit()
             else:
-                extracted = extract_local((f"temp/{filename}", lgu_name, province_name, region))
+                extracted = extract_local((f"temp/{filename}", lgu_name, None, "NCR"))
+
+                print((extracted[1], extracted[2]))
 
                 # save data straight to db
                 with cur.copy("COPY local_candidate (ballot_number, ballot_name, sex, name, partylist, position, district, lgu, province) FROM STDIN") as copy:
@@ -219,55 +216,17 @@ def extract_politicians_in_province(link:str, region:str) -> pd.DataFrame|None:
                 
                 # save lgu data to separate table
                 db.execute("""
-                            INSERT INTO lgu_summary (name, province_name, region, total_districts)
-                            VALUES (%s, %s, %s, %s);
-                           """, (lgu_name, province_name, region, extracted[1]))
+                            INSERT INTO lgu_summary (name, province_name, region, total_lgu_districts, total_legislative_districts)
+                            VALUES (%s, %s, %s, %s, %s);
+                           """, (lgu_name, None, "NCR", extracted[1], extracted[2]))
                 db.commit()
 
             os.remove(f"temp/{filename}")
 
-            print(f"Successfully loaded candidates from {lgu_name}, {province_name}, Region {region}")
+            print(f"Successfully loaded candidates from {lgu_name}, Region NCR")
 
     return None
 
-regions = ({"region_name": "NCR", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_NCR"},
-    {"region_name": "CAR", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_CAR"},
-    {"region_name": "NIR", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_NIR"},
-    {"region_name": "I", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R1"},
-    {"region_name": "II", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R2"},
-    {"region_name": "III", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R3"},
-    {"region_name": "IV-A", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R4A"},
-    {"region_name": "IV-B", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R4B"},
-    {"region_name": "V", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R5"},
-    {"region_name": "VI", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R6"},
-    {"region_name": "VII", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R7"},
-    {"region_name": "VIII", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R8"},
-    {"region_name": "IX", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R9"},
-    {"region_name": "X", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R10"},
-    {"region_name": "XI", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R11"},
-    {"region_name": "XII", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R12"},
-    {"region_name": "CARAGA", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_R13"},
-    {"region_name": "BARMM", "link": "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_BARMM"})
+link = "https://comelec.gov.ph/?r=2025NLE/CLC2025/CLC_NCR"
 
-# extract from CAR, NIR and Region I-IVA
-# extract_politicians_in_province(regions[1]["link"], regions[1]["region_name"])
-# extract_politicians_in_province(regions[2]["link"], regions[2]["region_name"])
-# extract_politicians_in_province(regions[3]["link"], regions[3]["region_name"])
-# extract_politicians_in_province(regions[4]["link"], regions[4]["region_name"])
-# extract_politicians_in_province(regions[5]["link"], regions[5]["region_name"])
-# extract_politicians_in_province(regions[6]["link"], regions[6]["region_name"])
-
-extract_politicians_in_province(regions[7]["link"], regions[7]["region_name"])
-extract_politicians_in_province(regions[8]["link"], regions[8]["region_name"])
-extract_politicians_in_province(regions[9]["link"], regions[9]["region_name"])
-
-extract_politicians_in_province(regions[10]["link"], regions[10]["region_name"])
-extract_politicians_in_province(regions[11]["link"], regions[11]["region_name"])
-extract_politicians_in_province(regions[12]["link"], regions[12]["region_name"])
-
-extract_politicians_in_province(regions[13]["link"], regions[13]["region_name"])
-extract_politicians_in_province(regions[14]["link"], regions[14]["region_name"])
-extract_politicians_in_province(regions[15]["link"], regions[15]["region_name"])
-
-extract_politicians_in_province(regions[16]["link"], regions[16]["region_name"])
-extract_politicians_in_province(regions[17]["link"], regions[17]["region_name"])
+extract_politicians_in_ncr(link)

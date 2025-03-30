@@ -37,6 +37,7 @@ CREATE TABLE lgu_summary (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     province_name VARCHAR(255) NOT NULL,
-    total_districts INT NOT NULL DEFAULT 0
+    total_lgu_districts INT NOT NULL DEFAULT 0
+    total_legislative_districts INT NOT NULL DEFAULT 0
 );
 

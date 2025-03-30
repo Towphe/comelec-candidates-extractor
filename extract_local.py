@@ -1,11 +1,12 @@
 # NOTE: rename to `extract_provincial.py` later on
 
-import pandas as pd
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import pandas as pd
 import os
 import time
 import pdfplumber
@@ -17,6 +18,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 db_key = os.getenv("DB_KEY")
+
+correctTitle = {
+    "MEMMBEEMR,B SEARN,G SGAUNNIGANGGU PNAINALNALGA WPIAGNANLALAWIGAN": "PROVINCIAL BOARD MEMBER",
+    "MEMMBEEMR,B HEORU,S HE OOUF RSEEP OREFS RENETPARTIEVESSENTATIVES": "REPRESENTATIVE",
+    "PROPVRINOCVIAINL CGOIAVLE RGNOOVRERNOR": "GOVERNOR",
+    "PROPVRINOCVIAINL CVIICAEL-G VOIVCEER-NGOORVERNOR": "VICE-GOVERNOR",
+    "MAYMOARYOR": "MAYOR",
+    "VICVEI-MCAEY-MORAYOR": "VICE-MAYOR",
+    "COUCNOCUILNOCRILOR": "COUNCILOR"
+}
 
 def remove_line_breaks(val):
     if type(val) != str:
@@ -75,6 +86,7 @@ def extract_provincial(filename:str, province:str, region:str):
 
         if (re.match(r'^[0-9]+$', row[0]) == None):
             # No match found
+            print(row[0])
             previous = row
             continue
 
@@ -112,6 +124,88 @@ def extract_provincial(filename:str, province:str, region:str):
     
     return (master_list[(master_list["POSITION"] == "GOVERNOR") | (master_list["POSITION"] == "VICE-GOVERNOR") | (master_list["POSITION"] == "PROVINCIAL_COUNCIL") | (master_list["POSITION"] == "DISTRICT_REPRESENTATIVE")], provincial_district_count, legislative_district_count)
 
+def extract_local_2(filename:str, lgu:str, province:str, region:str):
+    master_list = []
+
+    with pdfplumber.open(filename) as s_list:
+        for page in s_list.pages:
+            # get tables in page
+            tables = page.find_tables()
+
+            for table in tables:
+                master_list = [*master_list, *table.extract()]
+
+    # return master_list
+    # Precedence of extracted positions
+    # 1. Governor
+    # 2. Vice-Governor
+    # 3. Sangguniang Panlalawigan
+    # 4. District Representative
+    
+    position_count = 0
+    district_count = 0
+    curr_pos = ""
+    previous = None
+    provincial_district_count = 0
+    legislative_district_count = 0
+    for row in master_list:
+        
+        # use regex to detect if it's a number
+        if (row[0] == "#"):
+            # skip hashes
+            previous = row
+            continue
+
+        if row[0] == "MEMMBEEMR,B SEARN,G SGAUNNIGANGGU PNAINALNALGA WPIAGNANLALAWIGAN" and position_count < 3 and curr_pos != "PROVINCIAL BOARD":
+            position_count = 3 # `3` denotes that we are parsing provincial council
+            district_count = 0
+            curr_pos = "PROVINCIAL BOARD"
+        elif row[0] == "MEMMBEEMR,B HEORU,S HE OOUF RSEEP OREFS RENETPARTIEVESSENTATIVES" and position_count < 4 and curr_pos != "DISTRICT REPRESENTATIVE":
+            position_count = 4 # `4` denotes that we are parsing district representatives
+            provincial_district_count = district_count
+            district_count = 0
+            curr_pos = "DISTRICT REPRESENTATIVE"
+
+        if (re.match(r'^[0-9]+$', row[0]) == None):
+            # No match found
+            print(row[0])
+            previous = row
+            continue
+
+        if previous[0] == "#" and row[0] == "1" and position_count < 2:
+            position_count += 1
+        elif previous[0] == "#" and row[0] == "1" and position_count >= 2:
+            district_count += 1
+        
+        if position_count == 1:
+            row.append("MAYOR")
+            row.append(None)
+        elif position_count == 2:
+            row.append("VICE-MAYOR")
+            row.append(None)
+        elif position_count == 3:
+            row.append("PROVINCIAL COUNCIL")
+            row.append(str(district_count))
+        elif position_count == 4:
+            row.append("DISTRICT REPRESENTATIVE")
+            row.append(str(district_count))
+        
+        previous = row
+            
+    legislative_district_count = district_count
+    master_list = pd.DataFrame(master_list)
+
+    master_list.columns = ["#", "BALLOT NAME", "SEX", "NAME", "POLITICAL PARTY", "POSITION", "DISTRICT"]
+
+    master_list["BALLOT NAME"] = master_list["BALLOT NAME"].apply(remove_line_breaks)
+    master_list["SEX"] = master_list["SEX"].apply(shorten_sex)
+    master_list["NAME"] = master_list["NAME"].apply(remove_line_breaks)
+    master_list["POLITICAL PARTY"] = master_list["POLITICAL PARTY"].apply(remove_line_breaks)
+    master_list["LGU"] = None
+    master_list["PROVINCE"] = province
+    
+    return (master_list[(master_list["POSITION"] == "MAYOR") | (master_list["POSITION"] == "VICE-MAYOR") | (master_list["POSITION"] == "PROVINCIAL_COUNCIL") | (master_list["POSITION"] == "DISTRICT_REPRESENTATIVE")], provincial_district_count, legislative_district_count)
+
 
 def extract_local(filename:str, lgu:str, province:str, region:str):
     master_list = []
@@ -129,6 +223,7 @@ def extract_local(filename:str, lgu:str, province:str, region:str):
     # 3. Councilors per district
     position_count = 0
     district_count = 0
+    legislative_count = 0
     previous = None
     for row in master_list:
         # use regex to detect if it's a number
@@ -136,8 +231,9 @@ def extract_local(filename:str, lgu:str, province:str, region:str):
             # skip hashes
             previous = row
             continue
-        
+
         if (re.match(r'^[0-9]+$', row[0]) == None):
+            print(row[0])
             # No match found, increment position_count
             # position_count += 1
             previous = row
@@ -172,6 +268,94 @@ def extract_local(filename:str, lgu:str, province:str, region:str):
     master_list["PROVINCE"] = province
     master_list["SEX"] = master_list["SEX"].apply(shorten_sex)
     return (master_list[(master_list["POSITION"] == "MAYOR") | (master_list["POSITION"] == "VICE-MAYOR") | (master_list["POSITION"] == "COUNCILOR")], district_count)
+
+
+def extract_local_3(filename:str, lgu:str, province:str, region:str):
+    master_list = []
+    # filename = file_info[0]
+    # lgu = file_info[1]
+    # province = file_info[2]
+    # region = file_info[3]
+    district_count = 0
+    legislative_count = 0
+    position_count = 0
+    current_position = None
+
+    # put everything in one big list
+    with pdfplumber.open(filename) as s_list:
+        for page in s_list.pages:
+            # get tables in page
+            tables = page.find_tables()
+
+            for table in tables:
+                # attach extracted table to master list
+                master_list = [*master_list, *table.extract()]
+
+    for i in range(len(master_list)):
+        row = master_list[i]
+
+        if row[0] in correctTitle.keys():
+            previous_position = current_position
+            current_position = correctTitle[row[0]]
+
+            print(current_position)
+            # look ahead 2 rows
+            if i+2>=len(master_list):
+                break   # reached end
+            
+            next_row = master_list[i+2]
+
+            if previous_position == current_position:   # e.g. treated 1st district councilors then proceeding to 2nd district
+                if (next_row[0] == "1"):
+                    # handle start of a new count
+                    if current_position == "REPRESENTATIVE":
+                        legislative_count += 1
+                    elif current_position == "COUNCILOR":
+                        district_count += 1
+                continue
+            else:   # e.g. moved from representative to mayor
+                # start of new 
+                position_count += 1
+            
+                if current_position == "REPRESENTATIVE":
+                    legislative_count += 1
+                elif current_position == "COUNCILOR":
+                    district_count += 1
+
+                continue # proceed to next
+
+        if (row[0].strip() == "#"):
+            # skip hashes
+            continue
+        
+        # print(row)
+        row.append(current_position)
+
+        if current_position == "REPRESENTATIVE":
+            row.append(str(legislative_count))
+        elif current_position == "COUNCILOR":
+            row.append(str(district_count))
+        else:
+            row.append(None)
+
+        row.append(lgu)
+        row.append(province)
+
+    # iterate thru master list
+    df = pd.DataFrame(master_list)
+
+    df.columns = ["#", "BALLOT NAME", "SEX", "NAME", "POLITICAL PARTY", "POSITION", "DISTRICT", "LGU", "PROVINCE"]
+    df["BALLOT NAME"] = df["BALLOT NAME"].apply(remove_line_breaks)
+    df["NAME"] = df["NAME"].apply(remove_line_breaks)
+    df["POLITICAL PARTY"] = df["POLITICAL PARTY"].apply(remove_line_breaks)
+    df["SEX"] = df["SEX"].apply(shorten_sex)
+
+    return (df[(df["POSITION"] == "GOVERNOR") | (df["POSITION"] == "VICE-GOVERNOR") | (df["POSITION"] == "PROVINCIAL BOARD MEMBER") | (df["POSITION"] == "REPRESENTATIVE") | (df["POSITION"] == "MAYOR") | (df["POSITION"] == "VICE-MAYOR") | (df["POSITION"] == "COUNCILOR")], district_count, legislative_count)
+
+# extracted = extract_local_2("LAGUNA_CITYOFCALAMBA.pdf", "CITY OF CALAMBA", "LAGUNA", "IV-A")
+# print(extracted)
+# extracted2 = extract_local("LAGUNA_CITYOFSANTAROSA.pdf", "CITY OF SANTA ROSA", "LAGUNA", "IV-A")
+# extracted3 = extract_provincial("LAGUNA_OPES.pdf", "LAGUNA", "IV-A")
 
 download_path = os.getcwd() + "/temp"
 options = webdriver.ChromeOptions()
@@ -255,7 +439,7 @@ def extract_politicians_in_province(link:str, region:str) -> pd.DataFrame|None:
                            """, (province_name, extracted[1], extracted[2], region))
                 db.commit()
             else:
-                extracted = extract_local(f"temp/{filename}", lgu_name, province_name, region)
+                extracted = extract_local_3(f"temp/{filename}", lgu_name, province_name, region)
 
                 # save data straight to db
                 with cur.copy("COPY local_candidate (ballot_number, ballot_name, sex, name, partylist, position, district, lgu, province) FROM STDIN") as copy:
@@ -264,9 +448,9 @@ def extract_politicians_in_province(link:str, region:str) -> pd.DataFrame|None:
                 
                 # save lgu data to separate table
                 db.execute("""
-                            INSERT INTO lgu_summary (name, province_name, region, total_districts)
-                            VALUES (%s, %s, %s, %s);
-                           """, (lgu_name, province_name, region, extracted[1]))
+                            INSERT INTO lgu_summary (name, province_name, region, total_lgu_districts, total_legislative_districts)
+                            VALUES (%s, %s, %s, %s, %s);
+                           """, (lgu_name, province_name, region, extracted[1], extracted[2]))
                 db.commit()
 
             os.remove(f"temp/{filename}")
@@ -309,9 +493,9 @@ regions = ({"region_name": "NCR", "link": "https://comelec.gov.ph/?r=2025NLE/CLC
 # extract_politicians_in_province(regions[11]["link"], regions[11]["region_name"])
 # extract_politicians_in_province(regions[12]["link"], regions[12]["region_name"])
 
-# extract_politicians_in_province(regions[13]["link"], regions[13]["region_name"])
-# extract_politicians_in_province(regions[14]["link"], regions[14]["region_name"])
-# extract_politicians_in_province(regions[15]["link"], regions[15]["region_name"])
+extract_politicians_in_province(regions[13]["link"], regions[13]["region_name"])
+extract_politicians_in_province(regions[14]["link"], regions[14]["region_name"])
+extract_politicians_in_province(regions[15]["link"], regions[15]["region_name"])
 
-# extract_politicians_in_province(regions[16]["link"], regions[16]["region_name"])
-# extract_politicians_in_province(regions[17]["link"], regions[17]["region_name"])
+extract_politicians_in_province(regions[16]["link"], regions[16]["region_name"])
+extract_politicians_in_province(regions[17]["link"], regions[17]["region_name"])
